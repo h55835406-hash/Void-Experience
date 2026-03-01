@@ -30,7 +30,6 @@
     <div id="root"></div>
 
     <script>
-        // Конфигурация Firebase (заполняется автоматически средой или вставь свою вручную)
         const firebaseConfig = JSON.parse('{"apiKey":"","authDomain":"","projectId":"","storageBucket":"","messagingSenderId":"","appId":""}');
         const appId = "void-experience-gh";
         
@@ -38,7 +37,6 @@
         const auth = firebase.auth();
         const db = firebase.firestore();
 
-        // Основное состояние
         let state = {
             screen: 'menu',
             user: null,
@@ -50,11 +48,29 @@
             chatInput: ''
         };
 
-        const playerPos = { x: Math.random() * 5000, moving: 0 };
-        const texture = new Image();
-        texture.src = 'https://raw.githubusercontent.com/h55835406-hash/Void-Experience/main/Picsart_26-03-01_03-19-11-363.jpg';
+        const playerPos = { x: Math.random() * 5000, moving: 0, lastDir: 'right' };
+        
+        // Загрузка текстур окружения и персонажа
+        const assets = {
+            ground: new Image(),
+            idle: new Image(),
+            left1: new Image(),
+            left2: new Image(),
+            right1: new Image(),
+            right2: new Image()
+        };
 
-        // Инициализация Auth
+        const baseRaw = 'https://raw.githubusercontent.com/h55835406-hash/Void-Experience/main/';
+        assets.ground.src = baseRaw + 'Picsart_26-03-01_03-19-11-363.jpg';
+        assets.idle.src = baseRaw + 'idle.png';
+        assets.left1.src = baseRaw + 'left1.png';
+        assets.left2.src = baseRaw + 'left2.png';
+        assets.right1.src = baseRaw + 'right1.png';
+        assets.right2.src = baseRaw + 'right2.png';
+
+        let frameTick = 0;
+        let currentFrame = 1;
+
         auth.signInAnonymously().then(cred => {
             state.user = cred.user;
             renderUI();
@@ -69,14 +85,12 @@
             if (!state.user || !state.roomId) return;
             const roomPath = `artifacts/${appId}/public/data/rooms/${state.roomId.toUpperCase()}`;
             
-            // Синхронизация игроков
             db.collection(`${roomPath}/players`).onSnapshot(snap => {
                 const ps = {};
                 snap.forEach(d => { if(d.id !== state.user.uid) ps[d.id] = d.data(); });
                 state.players = ps;
             });
 
-            // Синхронизация чата
             db.collection(`${roomPath}/messages`).orderBy('t', 'desc').limit(30).onSnapshot(snap => {
                 let msgs = [];
                 snap.forEach(d => msgs.push(d.data()));
@@ -84,11 +98,12 @@
                 renderUI();
             });
 
-            // Обновление своей позиции
             setInterval(() => {
                 if(state.screen === 'game') {
                     db.doc(`${roomPath}/players/${state.user.uid}`).set({
                         x: playerPos.x,
+                        dir: playerPos.lastDir,
+                        moving: playerPos.moving,
                         nick: state.nickname,
                         t: firebase.firestore.FieldValue.serverTimestamp()
                     }, { merge: true });
@@ -108,10 +123,8 @@
             renderUI();
         }
 
-        // Рендеринг UI
         function renderUI() {
             const root = document.getElementById('root');
-            
             if (state.screen === 'menu') {
                 root.innerHTML = `
                     <div class="flex flex-col items-center justify-center h-screen fade-in">
@@ -134,7 +147,6 @@
                         <button onclick="setState({screen:'menu'})" class="mt-4 text-[10px] opacity-30 uppercase">Back</button>
                     </div>
                 `;
-                document.getElementById('roomInp').focus();
             } else if (state.screen === 'settings') {
                 root.innerHTML = `
                     <div class="flex flex-col items-center justify-center h-screen">
@@ -156,21 +168,23 @@
                         <input id="chatInp" onkeydown="if(event.key==='Enter') sendMsg()" class="mt-6 bg-white/5 p-4 rounded-lg text-xs outline-none border border-white/5" placeholder="Message...">
                     </div>
                     <div class="absolute bottom-12 left-12 flex gap-6">
-                        <button onpointerdown="playerPos.moving=-1" onpointerup="playerPos.moving=0" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl">←</button>
-                        <button onpointerdown="playerPos.moving=1" onpointerup="playerPos.moving=0" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl">→</button>
+                        <button onpointerdown="setMove(-1)" onpointerup="setMove(0)" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl">←</button>
+                        <button onpointerdown="setMove(1)" onpointerup="setMove(0)" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl">→</button>
                     </div>
-                    <button onclick="location.reload()" class="absolute bottom-12 right-12 text-[9px] opacity-20 hover:opacity-100 uppercase">Exit</button>
-                    <div class="fixed inset-0 z-[1000] bg-black text-white flex items-center justify-center p-10 text-center md:hidden portrait:flex landscape:hidden font-bold text-[10px] tracking-[0.5em]">TURN DEVICE</div>
+                    <button onclick="location.reload()" class="absolute bottom-12 right-12 text-[9px] opacity-20 hover:opacity-100 uppercase font-bold">Exit</button>
                 `;
                 initGame();
                 updateChat();
             }
         }
 
-        // Логика кнопок
+        function setMove(dir) {
+            playerPos.moving = dir;
+            if (dir !== 0) playerPos.lastDir = dir > 0 ? 'right' : 'left';
+        }
+
         function startNew() {
-            const code = Math.random().toString(36).substring(7).toUpperCase();
-            state.roomId = code;
+            state.roomId = Math.random().toString(36).substring(7).toUpperCase();
             state.screen = 'game';
             setupRoomSync();
             renderUI();
@@ -187,8 +201,7 @@
         }
 
         function saveNick() {
-            const val = document.getElementById('nickInp').value;
-            state.nickname = val.toUpperCase() || 'USER';
+            state.nickname = document.getElementById('nickInp').value.toUpperCase() || 'USER';
             localStorage.setItem('hafa_nick', state.nickname);
             state.screen = 'menu';
             renderUI();
@@ -216,7 +229,6 @@
             }
         }
 
-        // Игровой цикл
         function initGame() {
             const canvas = document.getElementById('gameCanvas');
             const ctx = canvas.getContext('2d');
@@ -227,40 +239,53 @@
                 canvas.height = window.innerHeight;
                 const groundY = canvas.height * 0.7;
 
-                playerPos.x += playerPos.moving * 5;
+                playerPos.x += playerPos.moving * 4;
+
+                // Анимация кадров 1-2
+                frameTick++;
+                if(frameTick > 12) {
+                    currentFrame = currentFrame === 1 ? 2 : 1;
+                    frameTick = 0;
+                }
 
                 ctx.fillStyle = '#05070a';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                // Земля
-                if (texture.complete) {
+                if (assets.ground.complete) {
                     const tw = 600;
                     const offset = (playerPos.x % tw);
                     for (let i = -tw; i < canvas.width + tw; i += tw) {
-                        ctx.drawImage(texture, i - offset, groundY, tw, canvas.height - groundY);
+                        ctx.drawImage(assets.ground, i - offset, groundY, tw, canvas.height - groundY);
                     }
                 }
 
-                function drawCube(x, nick, isMe) {
+                function drawSprite(x, nick, isMe, moving, dir) {
                     const screenX = isMe ? canvas.width / 2 : (canvas.width / 2) + (x - playerPos.x);
-                    const size = 32;
-                    const vY = groundY + 8; // Погружение в траву
+                    const sW = 64; 
+                    const sH = 64;
+                    const vY = groundY + 16; // Притапливаем в траву
+
+                    let img = assets.idle;
+                    if (moving !== 0) {
+                        const side = dir === 'right' || dir > 0 ? 'right' : 'left';
+                        img = assets[side + currentFrame];
+                    }
+
+                    if (img.complete) {
+                        ctx.drawImage(img, screenX - sW/2, vY - sH, sW, sH);
+                    } else {
+                        ctx.fillStyle = "white";
+                        ctx.fillRect(screenX - 10, vY - 20, 20, 20);
+                    }
 
                     ctx.fillStyle = 'rgba(255,255,255,0.4)';
-                    ctx.font = '10px monospace';
+                    ctx.font = '8px monospace';
                     ctx.textAlign = 'center';
-                    ctx.fillText(nick.toUpperCase(), screenX, vY - size - 15);
-
-                    ctx.fillStyle = '#000';
-                    ctx.fillRect(screenX - size/2, vY - size, size, size);
-                    
-                    ctx.fillStyle = '#fff';
-                    ctx.fillRect(screenX - 10, vY - size + 8, 6, 6);
-                    ctx.fillRect(screenX + 4, vY - size + 8, 6, 6);
+                    ctx.fillText(nick.toUpperCase(), screenX, vY - sH - 10);
                 }
 
-                Object.values(state.players).forEach(p => drawCube(p.x, p.nick, false));
-                drawCube(playerPos.x, state.nickname, true);
+                Object.values(state.players).forEach(p => drawSprite(p.x, p.nick, false, p.moving, p.dir));
+                drawSprite(playerPos.x, state.nickname, true, playerPos.moving, playerPos.lastDir);
 
                 requestAnimationFrame(loop);
             }
