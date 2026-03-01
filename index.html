@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Void Experience</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;800&display=swap');
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #05070a;
+            font-family: 'JetBrains+Mono', monospace;
+            color: white;
+            user-select: none;
+            touch-action: none;
+        }
+        canvas { display: block; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .fade-in { animation: fadeIn 1s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script>
+        // Конфигурация Firebase (заполняется автоматически средой или вставь свою вручную)
+        const firebaseConfig = JSON.parse('{"apiKey":"","authDomain":"","projectId":"","storageBucket":"","messagingSenderId":"","appId":""}');
+        const appId = "void-experience-gh";
+        
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        // Основное состояние
+        let state = {
+            screen: 'menu',
+            user: null,
+            nickname: localStorage.getItem('hafa_nick') || 'USER',
+            roomId: '',
+            players: {},
+            messages: [],
+            isChatOpen: false,
+            chatInput: ''
+        };
+
+        const playerPos = { x: Math.random() * 5000, moving: 0 };
+        const texture = new Image();
+        texture.src = 'https://raw.githubusercontent.com/h55835406-hash/Void-Experience/main/Picsart_26-03-01_03-19-11-363.jpg';
+
+        // Инициализация Auth
+        auth.signInAnonymously().then(cred => {
+            state.user = cred.user;
+            renderUI();
+        });
+
+        function setState(newProps) {
+            state = { ...state, ...newProps };
+            renderUI();
+        }
+
+        function setupRoomSync() {
+            if (!state.user || !state.roomId) return;
+            const roomPath = `artifacts/${appId}/public/data/rooms/${state.roomId.toUpperCase()}`;
+            
+            // Синхронизация игроков
+            db.collection(`${roomPath}/players`).onSnapshot(snap => {
+                const ps = {};
+                snap.forEach(d => { if(d.id !== state.user.uid) ps[d.id] = d.data(); });
+                state.players = ps;
+            });
+
+            // Синхронизация чата
+            db.collection(`${roomPath}/messages`).orderBy('t', 'desc').limit(30).onSnapshot(snap => {
+                let msgs = [];
+                snap.forEach(d => msgs.push(d.data()));
+                state.messages = msgs.reverse();
+                renderUI();
+            });
+
+            // Обновление своей позиции
+            setInterval(() => {
+                if(state.screen === 'game') {
+                    db.doc(`${roomPath}/players/${state.user.uid}`).set({
+                        x: playerPos.x,
+                        nick: state.nickname,
+                        t: firebase.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                }
+            }, 500);
+        }
+
+        async function sendMsg() {
+            if (!state.chatInput.trim() || !state.roomId) return;
+            const roomPath = `artifacts/${appId}/public/data/rooms/${state.roomId.toUpperCase()}`;
+            await db.collection(`${roomPath}/messages`).add({
+                text: state.chatInput,
+                nick: state.nickname,
+                t: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            state.chatInput = '';
+            renderUI();
+        }
+
+        // Рендеринг UI
+        function renderUI() {
+            const root = document.getElementById('root');
+            
+            if (state.screen === 'menu') {
+                root.innerHTML = `
+                    <div class="flex flex-col items-center justify-center h-screen fade-in">
+                        <div class="mb-16 text-center">
+                            <p class="text-[9px] tracking-[0.6em] text-gray-500 mb-4 uppercase">Hafa Studio Presents</p>
+                            <h1 class="text-4xl font-black tracking-tighter uppercase">Void Experience</h1>
+                        </div>
+                        <div class="flex flex-col gap-3 w-64">
+                            <button onclick="startNew()" class="w-full py-4 bg-white/5 border border-white/10 text-[10px] tracking-[0.4em] font-bold hover:bg-white hover:text-black transition-all">CREATE VOID</button>
+                            <button onclick="setState({screen:'lobby'})" class="w-full py-4 bg-white/5 border border-white/10 text-[10px] tracking-[0.4em] font-bold hover:bg-white hover:text-black transition-all">JOIN VOID</button>
+                            <button onclick="setState({screen:'settings'})" class="mt-4 text-[9px] text-gray-600 hover:text-white uppercase tracking-widest text-center">Identity: ${state.nickname}</button>
+                        </div>
+                    </div>
+                `;
+            } else if (state.screen === 'lobby') {
+                root.innerHTML = `
+                    <div class="flex flex-col items-center justify-center h-screen">
+                        <input id="roomInp" type="text" maxlength="5" class="bg-transparent border-b border-white/20 py-4 text-center text-3xl outline-none tracking-[0.5em] w-64 uppercase" placeholder="CODE">
+                        <button onclick="joinRoom()" class="mt-8 text-[10px] border border-white/20 px-8 py-2 uppercase tracking-widest">Enter</button>
+                        <button onclick="setState({screen:'menu'})" class="mt-4 text-[10px] opacity-30 uppercase">Back</button>
+                    </div>
+                `;
+                document.getElementById('roomInp').focus();
+            } else if (state.screen === 'settings') {
+                root.innerHTML = `
+                    <div class="flex flex-col items-center justify-center h-screen">
+                        <input id="nickInp" type="text" maxlength="10" value="${state.nickname}" class="bg-transparent border-b border-white/20 py-2 text-center text-2xl outline-none uppercase" placeholder="NICKNAME">
+                        <button onclick="saveNick()" class="mt-12 px-10 py-2 border border-white/10 text-[10px] uppercase tracking-widest">Save</button>
+                    </div>
+                `;
+            } else if (state.screen === 'game') {
+                root.innerHTML = `
+                    <canvas id="gameCanvas"></canvas>
+                    <div class="absolute top-8 left-8 text-[9px] tracking-widest opacity-40 uppercase">
+                        ${state.nickname} // ${state.roomId}
+                    </div>
+                    <button onclick="toggleChat()" class="absolute top-8 right-8 w-12 h-12 flex items-center justify-center bg-white/5 border border-white/10 rounded-full z-50">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                    </button>
+                    <div id="chatBox" class="absolute top-0 right-0 h-full w-72 bg-black/80 backdrop-blur-2xl border-l border-white/5 transition-transform duration-500 z-40 p-8 flex flex-col ${state.isChatOpen ? 'translate-x-0' : 'translate-x-full'}">
+                        <div class="flex-1 overflow-y-auto space-y-5 pt-16 no-scrollbar" id="chatMsgs"></div>
+                        <input id="chatInp" onkeydown="if(event.key==='Enter') sendMsg()" class="mt-6 bg-white/5 p-4 rounded-lg text-xs outline-none border border-white/5" placeholder="Message...">
+                    </div>
+                    <div class="absolute bottom-12 left-12 flex gap-6">
+                        <button onpointerdown="playerPos.moving=-1" onpointerup="playerPos.moving=0" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl">←</button>
+                        <button onpointerdown="playerPos.moving=1" onpointerup="playerPos.moving=0" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl">→</button>
+                    </div>
+                    <button onclick="location.reload()" class="absolute bottom-12 right-12 text-[9px] opacity-20 hover:opacity-100 uppercase">Exit</button>
+                    <div class="fixed inset-0 z-[1000] bg-black text-white flex items-center justify-center p-10 text-center md:hidden portrait:flex landscape:hidden font-bold text-[10px] tracking-[0.5em]">TURN DEVICE</div>
+                `;
+                initGame();
+                updateChat();
+            }
+        }
+
+        // Логика кнопок
+        function startNew() {
+            const code = Math.random().toString(36).substring(7).toUpperCase();
+            state.roomId = code;
+            state.screen = 'game';
+            setupRoomSync();
+            renderUI();
+        }
+
+        function joinRoom() {
+            const val = document.getElementById('roomInp').value;
+            if(val.length >= 3) {
+                state.roomId = val.toUpperCase();
+                state.screen = 'game';
+                setupRoomSync();
+                renderUI();
+            }
+        }
+
+        function saveNick() {
+            const val = document.getElementById('nickInp').value;
+            state.nickname = val.toUpperCase() || 'USER';
+            localStorage.setItem('hafa_nick', state.nickname);
+            state.screen = 'menu';
+            renderUI();
+        }
+
+        function toggleChat() {
+            state.isChatOpen = !state.isChatOpen;
+            renderUI();
+        }
+
+        function updateChat() {
+            const container = document.getElementById('chatMsgs');
+            if(!container) return;
+            container.innerHTML = state.messages.map(m => `
+                <div class="fade-in">
+                    <span class="text-[8px] text-gray-500 font-bold block mb-1 uppercase tracking-tighter">${m.nick}</span>
+                    <span class="text-xs leading-relaxed opacity-90">${m.text}</span>
+                </div>
+            `).join('');
+            container.scrollTop = container.scrollHeight;
+            const inp = document.getElementById('chatInp');
+            if(inp) {
+                inp.value = state.chatInput;
+                inp.oninput = (e) => state.chatInput = e.target.value;
+            }
+        }
+
+        // Игровой цикл
+        function initGame() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            function loop() {
+                if(state.screen !== 'game') return;
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                const groundY = canvas.height * 0.7;
+
+                playerPos.x += playerPos.moving * 5;
+
+                ctx.fillStyle = '#05070a';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Земля
+                if (texture.complete) {
+                    const tw = 600;
+                    const offset = (playerPos.x % tw);
+                    for (let i = -tw; i < canvas.width + tw; i += tw) {
+                        ctx.drawImage(texture, i - offset, groundY, tw, canvas.height - groundY);
+                    }
+                }
+
+                function drawCube(x, nick, isMe) {
+                    const screenX = isMe ? canvas.width / 2 : (canvas.width / 2) + (x - playerPos.x);
+                    const size = 32;
+                    const vY = groundY + 8; // Погружение в траву
+
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.font = '10px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(nick.toUpperCase(), screenX, vY - size - 15);
+
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(screenX - size/2, vY - size, size, size);
+                    
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(screenX - 10, vY - size + 8, 6, 6);
+                    ctx.fillRect(screenX + 4, vY - size + 8, 6, 6);
+                }
+
+                Object.values(state.players).forEach(p => drawCube(p.x, p.nick, false));
+                drawCube(playerPos.x, state.nickname, true);
+
+                requestAnimationFrame(loop);
+            }
+            loop();
+        }
+
+        renderUI();
+    </script>
+</body>
+</html>
+
