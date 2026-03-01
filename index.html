@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Void Experience</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;800&display=swap');
         body {
@@ -20,7 +20,7 @@
             user-select: none;
             touch-action: none;
         }
-        canvas { display: block; }
+        canvas { display: block; image-rendering: pixelated; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .fade-in { animation: fadeIn 1s ease-out; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -30,12 +30,23 @@
     <div id="root"></div>
 
     <script>
-        const firebaseConfig = JSON.parse('{"apiKey":"","authDomain":"","projectId":"","storageBucket":"","messagingSenderId":"","appId":""}');
-        const appId = "void-experience-gh";
+        // Заглушка конфига, если __firebase_config не определен
+        let firebaseConfig = { apiKey: "AIza...", authDomain: "...", projectId: "...", storageBucket: "...", messagingSenderId: "...", appId: "..." };
+        try {
+            if (typeof __firebase_config !== 'undefined') {
+                firebaseConfig = JSON.parse(__firebase_config);
+            }
+        } catch(e) {}
+
+        const appId = "void-experience-v2";
         
-        firebase.initializeApp(firebaseConfig);
-        const auth = firebase.auth();
-        const db = firebase.firestore();
+        // Инициализация с проверкой
+        if (firebaseConfig.projectId !== "...") {
+            firebase.initializeApp(firebaseConfig);
+        }
+
+        const db = firebase.apps.length ? firebase.firestore() : null;
+        const auth = firebase.apps.length ? firebase.auth() : null;
 
         let state = {
             screen: 'menu',
@@ -48,9 +59,8 @@
             chatInput: ''
         };
 
-        const playerPos = { x: Math.random() * 5000, moving: 0, lastDir: 'right' };
+        const playerPos = { x: Math.random() * 2000, moving: 0, lastDir: 'right' };
         
-        // Загрузка текстур окружения и персонажа
         const assets = {
             ground: new Image(),
             idle: new Image(),
@@ -71,10 +81,14 @@
         let frameTick = 0;
         let currentFrame = 1;
 
-        auth.signInAnonymously().then(cred => {
-            state.user = cred.user;
+        if (auth) {
+            auth.signInAnonymously().then(cred => {
+                state.user = cred.user;
+                renderUI();
+            }).catch(() => renderUI());
+        } else {
             renderUI();
-        });
+        }
 
         function setState(newProps) {
             state = { ...state, ...newProps };
@@ -82,24 +96,24 @@
         }
 
         function setupRoomSync() {
-            if (!state.user || !state.roomId) return;
+            if (!db || !state.user || !state.roomId) return;
             const roomPath = `artifacts/${appId}/public/data/rooms/${state.roomId.toUpperCase()}`;
             
             db.collection(`${roomPath}/players`).onSnapshot(snap => {
                 const ps = {};
                 snap.forEach(d => { if(d.id !== state.user.uid) ps[d.id] = d.data(); });
                 state.players = ps;
-            });
+            }, err => console.log("FireStore error: ", err));
 
-            db.collection(`${roomPath}/messages`).orderBy('t', 'desc').limit(30).onSnapshot(snap => {
+            db.collection(`${roomPath}/messages`).orderBy('t', 'desc').limit(20).onSnapshot(snap => {
                 let msgs = [];
                 snap.forEach(d => msgs.push(d.data()));
                 state.messages = msgs.reverse();
-                renderUI();
-            });
+                updateChatUI();
+            }, err => console.log("Chat error: ", err));
 
             setInterval(() => {
-                if(state.screen === 'game') {
+                if(state.screen === 'game' && state.user) {
                     db.doc(`${roomPath}/players/${state.user.uid}`).set({
                         x: playerPos.x,
                         dir: playerPos.lastDir,
@@ -108,11 +122,11 @@
                         t: firebase.firestore.FieldValue.serverTimestamp()
                     }, { merge: true });
                 }
-            }, 500);
+            }, 600);
         }
 
         async function sendMsg() {
-            if (!state.chatInput.trim() || !state.roomId) return;
+            if (!db || !state.chatInput.trim() || !state.roomId) return;
             const roomPath = `artifacts/${appId}/public/data/rooms/${state.roomId.toUpperCase()}`;
             await db.collection(`${roomPath}/messages`).add({
                 text: state.chatInput,
@@ -120,61 +134,74 @@
                 t: firebase.firestore.FieldValue.serverTimestamp()
             });
             state.chatInput = '';
-            renderUI();
+            const inp = document.getElementById('chatInp');
+            if (inp) inp.value = '';
         }
 
         function renderUI() {
             const root = document.getElementById('root');
             if (state.screen === 'menu') {
                 root.innerHTML = `
-                    <div class="flex flex-col items-center justify-center h-screen fade-in">
-                        <div class="mb-16 text-center">
-                            <p class="text-[9px] tracking-[0.6em] text-gray-500 mb-4 uppercase">Hafa Studio Presents</p>
-                            <h1 class="text-4xl font-black tracking-tighter uppercase">Void Experience</h1>
+                    <div class="flex flex-col items-center justify-center h-screen fade-in px-6">
+                        <div class="mb-12 text-center">
+                            <p class="text-[8px] tracking-[0.6em] text-gray-500 mb-2 uppercase opacity-60">Hafa Studio Presents</p>
+                            <h1 class="text-3xl md:text-5xl font-black tracking-tighter uppercase leading-none">Void Experience</h1>
                         </div>
-                        <div class="flex flex-col gap-3 w-64">
-                            <button onclick="startNew()" class="w-full py-4 bg-white/5 border border-white/10 text-[10px] tracking-[0.4em] font-bold hover:bg-white hover:text-black transition-all">CREATE VOID</button>
-                            <button onclick="setState({screen:'lobby'})" class="w-full py-4 bg-white/5 border border-white/10 text-[10px] tracking-[0.4em] font-bold hover:bg-white hover:text-black transition-all">JOIN VOID</button>
-                            <button onclick="setState({screen:'settings'})" class="mt-4 text-[9px] text-gray-600 hover:text-white uppercase tracking-widest text-center">Identity: ${state.nickname}</button>
+                        <div class="flex flex-col gap-3 w-full max-w-[280px]">
+                            <button onclick="startNew()" class="w-full py-5 bg-white/5 border border-white/10 text-[10px] tracking-[0.4em] font-bold hover:bg-white hover:text-black transition-all active:scale-95">CREATE VOID</button>
+                            <button onclick="setState({screen:'lobby'})" class="w-full py-5 bg-white/5 border border-white/10 text-[10px] tracking-[0.4em] font-bold hover:bg-white hover:text-black transition-all active:scale-95">JOIN VOID</button>
+                            <button onclick="setState({screen:'settings'})" class="mt-4 text-[9px] text-gray-500 hover:text-white uppercase tracking-widest text-center transition-colors">Identity: ${state.nickname}</button>
                         </div>
                     </div>
                 `;
             } else if (state.screen === 'lobby') {
                 root.innerHTML = `
-                    <div class="flex flex-col items-center justify-center h-screen">
-                        <input id="roomInp" type="text" maxlength="5" class="bg-transparent border-b border-white/20 py-4 text-center text-3xl outline-none tracking-[0.5em] w-64 uppercase" placeholder="CODE">
-                        <button onclick="joinRoom()" class="mt-8 text-[10px] border border-white/20 px-8 py-2 uppercase tracking-widest">Enter</button>
-                        <button onclick="setState({screen:'menu'})" class="mt-4 text-[10px] opacity-30 uppercase">Back</button>
+                    <div class="flex flex-col items-center justify-center h-screen p-6">
+                        <input id="roomInp" type="text" maxlength="5" class="bg-transparent border-b border-white/20 py-4 text-center text-4xl outline-none tracking-[0.5em] w-full max-w-[300px] uppercase" placeholder="CODE">
+                        <div class="mt-10 flex flex-col gap-4 w-full max-w-[200px]">
+                            <button onclick="joinRoom()" class="py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest">Enter</button>
+                            <button onclick="setState({screen:'menu'})" class="text-[10px] opacity-30 uppercase tracking-widest py-2">Back</button>
+                        </div>
                     </div>
                 `;
+                setTimeout(() => document.getElementById('roomInp')?.focus(), 100);
             } else if (state.screen === 'settings') {
                 root.innerHTML = `
-                    <div class="flex flex-col items-center justify-center h-screen">
-                        <input id="nickInp" type="text" maxlength="10" value="${state.nickname}" class="bg-transparent border-b border-white/20 py-2 text-center text-2xl outline-none uppercase" placeholder="NICKNAME">
-                        <button onclick="saveNick()" class="mt-12 px-10 py-2 border border-white/10 text-[10px] uppercase tracking-widest">Save</button>
+                    <div class="flex flex-col items-center justify-center h-screen p-6">
+                        <p class="text-[8px] tracking-widest text-gray-500 mb-4 uppercase">Set Nickname</p>
+                        <input id="nickInp" type="text" maxlength="10" value="${state.nickname}" class="bg-transparent border-b border-white/20 py-2 text-center text-3xl outline-none uppercase w-full max-w-[300px]" placeholder="NAME">
+                        <button onclick="saveNick()" class="mt-12 px-12 py-4 bg-white/5 border border-white/10 text-[10px] uppercase tracking-[0.3em] font-bold hover:bg-white hover:text-black">Save</button>
                     </div>
                 `;
             } else if (state.screen === 'game') {
                 root.innerHTML = `
                     <canvas id="gameCanvas"></canvas>
-                    <div class="absolute top-8 left-8 text-[9px] tracking-widest opacity-40 uppercase">
-                        ${state.nickname} // ${state.roomId}
+                    <div class="absolute top-6 left-6 text-[8px] tracking-widest opacity-40 uppercase pointer-events-none">
+                        ${state.nickname} // ${state.roomId || 'OFFLINE'}
                     </div>
-                    <button onclick="toggleChat()" class="absolute top-8 right-8 w-12 h-12 flex items-center justify-center bg-white/5 border border-white/10 rounded-full z-50">
+                    
+                    <button onclick="toggleChat()" class="absolute top-6 right-6 w-10 h-10 flex items-center justify-center bg-white/5 border border-white/10 rounded-full z-50">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
                     </button>
-                    <div id="chatBox" class="absolute top-0 right-0 h-full w-72 bg-black/80 backdrop-blur-2xl border-l border-white/5 transition-transform duration-500 z-40 p-8 flex flex-col ${state.isChatOpen ? 'translate-x-0' : 'translate-x-full'}">
-                        <div class="flex-1 overflow-y-auto space-y-5 pt-16 no-scrollbar" id="chatMsgs"></div>
-                        <input id="chatInp" onkeydown="if(event.key==='Enter') sendMsg()" class="mt-6 bg-white/5 p-4 rounded-lg text-xs outline-none border border-white/5" placeholder="Message...">
+
+                    <div id="chatBox" class="absolute top-0 right-0 h-full w-full sm:w-72 bg-black/90 backdrop-blur-xl border-l border-white/5 transition-transform duration-500 z-40 p-6 flex flex-col ${state.isChatOpen ? 'translate-x-0' : 'translate-x-full'}">
+                        <div class="flex-1 overflow-y-auto space-y-4 pt-16 no-scrollbar" id="chatMsgs"></div>
+                        <div class="mt-4 flex gap-2">
+                             <input id="chatInp" onkeydown="if(event.key==='Enter') sendMsg()" class="flex-1 bg-white/5 p-3 rounded text-xs outline-none border border-white/5" placeholder="Say something...">
+                             <button onclick="sendMsg()" class="bg-white/10 px-3 rounded text-[10px]">OK</button>
+                        </div>
                     </div>
-                    <div class="absolute bottom-12 left-12 flex gap-6">
-                        <button onpointerdown="setMove(-1)" onpointerup="setMove(0)" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl">←</button>
-                        <button onpointerdown="setMove(1)" onpointerup="setMove(0)" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl">→</button>
+
+                    <div class="absolute bottom-10 left-6 right-6 flex justify-between items-end pointer-events-none">
+                        <div class="flex gap-4 pointer-events-auto">
+                            <button onpointerdown="setMove(-1)" onpointerup="setMove(0)" onpointerleave="setMove(0)" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl backdrop-blur-sm active:bg-white/20 select-none">←</button>
+                            <button onpointerdown="setMove(1)" onpointerup="setMove(0)" onpointerleave="setMove(0)" class="w-16 h-16 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center text-xl backdrop-blur-sm active:bg-white/20 select-none">→</button>
+                        </div>
+                        <button onclick="location.reload()" class="text-[8px] opacity-20 hover:opacity-100 uppercase tracking-widest font-bold pointer-events-auto p-2">Leave</button>
                     </div>
-                    <button onclick="location.reload()" class="absolute bottom-12 right-12 text-[9px] opacity-20 hover:opacity-100 uppercase font-bold">Exit</button>
                 `;
                 initGame();
-                updateChat();
+                updateChatUI();
             }
         }
 
@@ -201,7 +228,8 @@
         }
 
         function saveNick() {
-            state.nickname = document.getElementById('nickInp').value.toUpperCase() || 'USER';
+            const val = document.getElementById('nickInp').value;
+            state.nickname = val.toUpperCase().trim() || 'USER';
             localStorage.setItem('hafa_nick', state.nickname);
             state.screen = 'menu';
             renderUI();
@@ -209,41 +237,37 @@
 
         function toggleChat() {
             state.isChatOpen = !state.isChatOpen;
-            renderUI();
+            const cb = document.getElementById('chatBox');
+            if(cb) cb.style.transform = state.isChatOpen ? 'translateX(0)' : 'translateX(100%)';
         }
 
-        function updateChat() {
+        function updateChatUI() {
             const container = document.getElementById('chatMsgs');
             if(!container) return;
             container.innerHTML = state.messages.map(m => `
-                <div class="fade-in">
-                    <span class="text-[8px] text-gray-500 font-bold block mb-1 uppercase tracking-tighter">${m.nick}</span>
-                    <span class="text-xs leading-relaxed opacity-90">${m.text}</span>
+                <div class="fade-in bg-white/5 p-2 rounded">
+                    <span class="text-[7px] text-gray-500 font-bold block mb-1 uppercase tracking-tight">${m.nick || 'Stranger'}</span>
+                    <span class="text-[11px] leading-tight opacity-90">${m.text}</span>
                 </div>
             `).join('');
             container.scrollTop = container.scrollHeight;
-            const inp = document.getElementById('chatInp');
-            if(inp) {
-                inp.value = state.chatInput;
-                inp.oninput = (e) => state.chatInput = e.target.value;
-            }
         }
 
         function initGame() {
             const canvas = document.getElementById('gameCanvas');
             const ctx = canvas.getContext('2d');
+            let aniId;
             
             function loop() {
                 if(state.screen !== 'game') return;
                 canvas.width = window.innerWidth;
                 canvas.height = window.innerHeight;
-                const groundY = canvas.height * 0.7;
+                const groundY = canvas.height * 0.72;
 
-                playerPos.x += playerPos.moving * 4;
+                playerPos.x += playerPos.moving * 3.5;
 
-                // Анимация кадров 1-2
                 frameTick++;
-                if(frameTick > 12) {
+                if(frameTick > 10) {
                     currentFrame = currentFrame === 1 ? 2 : 1;
                     frameTick = 0;
                 }
@@ -257,41 +281,45 @@
                     for (let i = -tw; i < canvas.width + tw; i += tw) {
                         ctx.drawImage(assets.ground, i - offset, groundY, tw, canvas.height - groundY);
                     }
+                } else {
+                    ctx.fillStyle = "#0a0a0a";
+                    ctx.fillRect(0, groundY, canvas.width, canvas.height);
                 }
 
                 function drawSprite(x, nick, isMe, moving, dir) {
                     const screenX = isMe ? canvas.width / 2 : (canvas.width / 2) + (x - playerPos.x);
-                    const sW = 64; 
-                    const sH = 64;
-                    const vY = groundY + 16; // Притапливаем в траву
+                    const size = 80; // Размер спрайта
+                    const vY = groundY + 12;
 
                     let img = assets.idle;
                     if (moving !== 0) {
-                        const side = dir === 'right' || dir > 0 ? 'right' : 'left';
+                        const side = dir === 'left' ? 'left' : 'right';
                         img = assets[side + currentFrame];
                     }
 
-                    if (img.complete) {
-                        ctx.drawImage(img, screenX - sW/2, vY - sH, sW, sH);
+                    if (img.complete && img.naturalWidth !== 0) {
+                        ctx.drawImage(img, screenX - size/2, vY - size, size, size);
                     } else {
-                        ctx.fillStyle = "white";
-                        ctx.fillRect(screenX - 10, vY - 20, 20, 20);
+                        // Фолбек если картинки нет
+                        ctx.fillStyle = isMe ? "white" : "gray";
+                        ctx.fillRect(screenX - 10, vY - 40, 20, 40);
                     }
 
-                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.fillStyle = 'rgba(255,255,255,0.3)';
                     ctx.font = '8px monospace';
                     ctx.textAlign = 'center';
-                    ctx.fillText(nick.toUpperCase(), screenX, vY - sH - 10);
+                    ctx.fillText(nick.toUpperCase(), screenX, vY - size - 8);
                 }
 
                 Object.values(state.players).forEach(p => drawSprite(p.x, p.nick, false, p.moving, p.dir));
                 drawSprite(playerPos.x, state.nickname, true, playerPos.moving, playerPos.lastDir);
 
-                requestAnimationFrame(loop);
+                aniId = requestAnimationFrame(loop);
             }
             loop();
         }
 
+        window.addEventListener('resize', () => { if(state.screen === 'game') renderUI(); });
         renderUI();
     </script>
 </body>
